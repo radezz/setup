@@ -22,6 +22,18 @@ user_invoker(){ [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != root ]] && echo "$SU
 need_root
 INVUSER=$(user_invoker)
 HOME_OF_INVUSER=$(getent passwd "$INVUSER" | cut -d: -f6)
+PYTHON_VENV_DIR="$HOME_OF_INVUSER/pyenv"
+
+# --- customize extra package installs here ---
+CUSTOM_NPM_PACKAGES=(
+  # "typescript"
+  # "@angular/cli"
+)
+
+CUSTOM_PIP_PACKAGES=(
+  # "requests"
+  # "black==23.9.1"
+)
 
 # --- detect pkg mgr ---
 PM=""; if has apt-get; then PM=apt; elif has dnf; then PM=dnf; elif has yum; then PM=yum; elif has pacman; then PM=pacman; elif has apk; then PM=apk; else fail "Unsupported package manager"; fi
@@ -51,6 +63,19 @@ install_claude(){
   say "Installing Claude Code CLI (@anthropic-ai/claude-code) for $INVUSER"
   su - "$INVUSER" -c "bash -lc 'export NVM_DIR=\"$HOME_OF_INVUSER/.nvm\"; . \"$HOME_OF_INVUSER/.nvm/nvm.sh\"; npm install -g @anthropic-ai/claude-code; claude --version || claude help || true'"
   ok "Claude Code CLI installed"
+}
+
+# --- additional npm packages (optional) ---
+install_custom_npm_packages(){
+  if (( ${#CUSTOM_NPM_PACKAGES[@]} == 0 )); then
+    say "No additional npm packages requested"
+    return
+  fi
+
+  say "Installing custom npm packages for $INVUSER: ${CUSTOM_NPM_PACKAGES[*]}"
+  local packages="${CUSTOM_NPM_PACKAGES[*]}"
+  su - "$INVUSER" -c "bash -lc 'export NVM_DIR=\"$HOME_OF_INVUSER/.nvm\"; . \"$HOME_OF_INVUSER/.nvm/nvm.sh\"; npm install -g ${packages}'"
+  ok "Custom npm packages installed"
 }
 
 # --- kind (latest) ---
@@ -90,11 +115,29 @@ install_kubectl(){
 # --- Python venv + uv install ---
 create_python_venv_and_uv(){
   say "Creating Python virtual environment in home directory for $INVUSER"
-  VENV_DIR="$HOME_OF_INVUSER/pyenv"
+  local VENV_DIR="$PYTHON_VENV_DIR"
   su - "$INVUSER" -c "bash -lc 'python3 -m venv $VENV_DIR'"
   su - "$INVUSER" -c "bash -lc 'source $VENV_DIR/bin/activate && python -m pip install --upgrade pip setuptools wheel uv && echo \"Virtual environment activated and uv installed: $VENV_DIR\"'"
   ok "Python virtual environment created and uv installed at $VENV_DIR"
-  source $VENV_DIR/bin/activate
+  source "$VENV_DIR/bin/activate"
+}
+
+# --- additional pip packages inside venv (optional) ---
+install_custom_pip_packages(){
+  if (( ${#CUSTOM_PIP_PACKAGES[@]} == 0 )); then
+    say "No additional pip packages requested"
+    return
+  fi
+
+  if [[ ! -d "$PYTHON_VENV_DIR/bin" ]]; then
+    warn "Python virtual environment not found at $PYTHON_VENV_DIR; skipping custom pip packages"
+    return
+  fi
+
+  say "Installing custom pip packages for $INVUSER in $PYTHON_VENV_DIR: ${CUSTOM_PIP_PACKAGES[*]}"
+  local packages="${CUSTOM_PIP_PACKAGES[*]}"
+  su - "$INVUSER" -c "bash -lc 'source \"$PYTHON_VENV_DIR/bin/activate\" && pip install ${packages}'"
+  ok "Custom pip packages installed"
 }
 
 # --- GitHub SSH key (ed25519) ---
@@ -118,9 +161,11 @@ setup_ssh_key(){
 
 install_nvm_node
 install_claude
+install_custom_npm_packages
 install_kind
 install_kubectl
 create_python_venv_and_uv
+install_custom_pip_packages
 setup_ssh_key
 
 say "All done. You may need to open a new shell for nvm, uv, and venv PATH changes to apply for user $INVUSER."
